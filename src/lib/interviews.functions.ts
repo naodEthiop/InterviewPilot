@@ -167,7 +167,7 @@ export const interviewerTurn = createServerFn({ method: "POST" })
 
     const { text } = await generateText({
       model: gateway(),
-      system: `You are conducting a ${interview.mode} interview for a ${interview.role} (${interview.difficulty}). Tone: ${personaTone[interview.interviewer_persona] ?? "professional"}.
+      system: `You are conducting a ${interview.mode} interview for a ${interview.role} (${interview.difficulty}). Tone: ${personaTone[interview.interviewer_persona ?? "friendly"] ?? "professional"}.
 
 Topics to cover (in roughly this order, but adapt):
 ${q.list.map((x, i) => `${i + 1}. ${x}`).join("\n")}
