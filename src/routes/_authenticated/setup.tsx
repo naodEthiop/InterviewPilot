@@ -1,13 +1,22 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { createInterview, analyzeResume, createResumeRecord, listResumes } from "@/lib/interviews.functions";
-import { useQuery } from "@tanstack/react-query";
+import {
+  createInterview,
+  getProfile,
+  listResumes,
+} from "@/lib/interviews.functions";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { FileText, Loader2, Upload } from "lucide-react";
+import { FileText, Loader2, Mic, CheckCircle2 } from "lucide-react";
+import { PageHeader } from "@/components/page-header";
+import { PdfDropzone, type PdfParseSuccess } from "@/components/pdf-dropzone";
+import {
+  ResumeCompletionForm,
+  type ResumeCompletionMissing,
+} from "@/components/resume-completion-form";
 
 export const Route = createFileRoute("/_authenticated/setup")({
   component: Setup,
@@ -30,58 +39,90 @@ const PERSONAS = [
 
 const DIFF = ["easy", "medium", "hard"] as const;
 
+const VOICE_GENDERS = [
+  { id: "female", label: "Female voice" },
+  { id: "male", label: "Male voice" },
+] as const;
+
+const DURATIONS = [
+  { sec: 900, label: "15 min" },
+  { sec: 1800, label: "30 min" },
+  { sec: 2700, label: "45 min" },
+  { sec: 3600, label: "60 min" },
+] as const;
+
 function Setup() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const create = useServerFn(createInterview);
-  const analyze = useServerFn(analyzeResume);
-  const createResume = useServerFn(createResumeRecord);
   const fetchResumes = useServerFn(listResumes);
+  const fetchProfile = useServerFn(getProfile);
 
-  const { data: resumes = [], refetch } = useQuery({ queryKey: ["resumes"], queryFn: () => fetchResumes() });
+  const { data: resumes = [], refetch: refetchResumes } = useQuery({
+    queryKey: ["resumes"],
+    queryFn: () => fetchResumes(),
+  });
+  const { data: profile } = useQuery({
+    queryKey: ["profile"],
+    queryFn: () => fetchProfile(),
+  });
 
   const [mode, setMode] = useState<(typeof MODES)[number]["id"]>("technical");
   const [persona, setPersona] = useState<(typeof PERSONAS)[number]["id"]>("friendly");
+  const [voiceGender, setVoiceGender] = useState<(typeof VOICE_GENDERS)[number]["id"]>("female");
   const [difficulty, setDifficulty] = useState<(typeof DIFF)[number]>("medium");
-  const [role, setRole] = useState("Senior Backend Engineer");
-  const [resumeText, setResumeText] = useState("");
+  const [timeLimitSeconds, setTimeLimitSeconds] = useState<(typeof DURATIONS)[number]["sec"]>(1800);
+  const [runMode, setRunMode] = useState<"practice" | "real">("practice");
+  const [role, setRole] = useState(profile?.target_role ?? "");
   const [selectedResumeId, setSelectedResumeId] = useState<string | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
   const [starting, setStarting] = useState(false);
 
-  async function handleAnalyzeText() {
-    if (resumeText.trim().length < 50) {
-      toast.error("Paste at least a short resume (50+ characters).");
-      return;
-    }
-    setAnalyzing(true);
-    try {
-      const record = await createResume({ data: { fileName: "Pasted resume" } });
-      const analyzed = await analyze({ data: { resumeId: record.id, rawText: resumeText } });
-      setSelectedResumeId(analyzed.id);
-      toast.success("Resume analyzed.");
-      refetch();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Resume analysis failed");
-    } finally {
-      setAnalyzing(false);
-    }
-  }
+  const [lastUpload, setLastUpload] = useState<PdfParseSuccess | null>(null);
+  const [missing, setMissing] = useState<ResumeCompletionMissing | null>(null);
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.type !== "text/plain") {
-      toast.message("For best results paste resume text. Reading file as text…");
+  useEffect(() => {
+    if (profile?.target_role && !role) setRole(profile.target_role);
+  }, [profile, role]);
+
+  useEffect(() => {
+    if (resumes.length > 0 && !selectedResumeId) {
+      setSelectedResumeId(resumes[0].id);
     }
-    const text = await file.text();
-    setResumeText(text);
+  }, [resumes, selectedResumeId]);
+
+  const showCompletion = useMemo(
+    () => missing && (missing.target_role || missing.experience_level || missing.skills),
+    [missing],
+  );
+
+  function onUpload(result: PdfParseSuccess) {
+    setLastUpload(result);
+    setMissing(result.missing);
+    setSelectedResumeId(result.resume.id);
+    if (!role && result.profile.target_role) setRole(result.profile.target_role);
+    refetchResumes();
+    qc.invalidateQueries({ queryKey: ["profile"] });
   }
 
   async function handleStart() {
-    if (!role.trim()) { toast.error("Enter a target role."); return; }
+    if (!role.trim()) {
+      toast.error("Enter a target role.");
+      return;
+    }
     setStarting(true);
     try {
-      const interview = await create({ data: { mode, role, persona, difficulty, resumeId: selectedResumeId ?? undefined } });
+      const interview = await create({
+        data: {
+          mode,
+          role,
+          persona,
+          difficulty,
+          voiceGender,
+          resumeId: selectedResumeId ?? undefined,
+          timeLimitSeconds,
+          runMode,
+        },
+      });
       navigate({ to: "/interview/$id", params: { id: interview.id } });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not start interview");
@@ -90,102 +131,234 @@ function Setup() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-6 md:px-8 py-10">
-      <p className="text-xs font-mono text-muted-foreground uppercase tracking-widest mb-2">New session</p>
-      <h1 className="font-display text-3xl font-bold mb-8">Configure your interview.</h1>
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 md:px-8 py-8 md:py-10 space-y-8 fade-in">
+      <PageHeader
+        icon={<Mic className="size-5" />}
+        title="New interview"
+        subtitle="Configure your mode, persona, and resume — then go."
+      />
 
-      <div className="space-y-8">
-        <Section title="01 · Target role">
-          <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. Senior Frontend Engineer" />
-        </Section>
+      <Section title="01 · Target role">
+        <Input
+          value={role}
+          onChange={(e) => setRole(e.target.value)}
+          placeholder="e.g. Senior Frontend Engineer"
+        />
+      </Section>
 
-        <Section title="02 · Interview mode">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            {MODES.map((m) => (
-              <button key={m.id} onClick={() => setMode(m.id)}
-                className={`p-3 rounded-lg border text-sm font-medium transition ${mode === m.id ? "border-brand bg-brand/10 text-brand" : "border-border hover:border-brand/30"}`}>
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </Section>
+      <Section title="02 · Interview mode">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          {MODES.map((m) => (
+            <PillButton key={m.id} active={mode === m.id} onClick={() => setMode(m.id)}>
+              {m.label}
+            </PillButton>
+          ))}
+        </div>
+      </Section>
 
-        <Section title="03 · Interviewer persona">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            {PERSONAS.map((p) => (
-              <button key={p.id} onClick={() => setPersona(p.id)}
-                className={`p-3 rounded-lg border text-left transition ${persona === p.id ? "border-brand bg-brand/10" : "border-border hover:border-brand/30"}`}>
-                <div className="text-sm font-medium">{p.label}</div>
-                <div className="text-xs text-muted-foreground">{p.desc}</div>
-              </button>
-            ))}
-          </div>
-        </Section>
+      <Section title="03 · Interviewer persona">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          {PERSONAS.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => setPersona(p.id)}
+              className={`p-3 rounded-xl border text-left transition ${
+                persona === p.id
+                  ? "border-brand bg-brand/10"
+                  : "border-border hover:border-brand/30"
+              }`}
+            >
+              <div className="text-sm font-medium">{p.label}</div>
+              <div className="text-xs text-muted-foreground">{p.desc}</div>
+            </button>
+          ))}
+        </div>
+      </Section>
 
-        <Section title="04 · Difficulty">
-          <div className="grid grid-cols-3 gap-2 max-w-md">
-            {DIFF.map((d) => (
-              <button key={d} onClick={() => setDifficulty(d)}
-                className={`p-2.5 rounded-lg border text-sm capitalize transition ${difficulty === d ? "border-brand bg-brand/10 text-brand" : "border-border hover:border-brand/30"}`}>
-                {d}
-              </button>
-            ))}
-          </div>
-        </Section>
+      <Section title="04 · Interviewer voice">
+        <div className="grid grid-cols-2 gap-2 max-w-md">
+          {VOICE_GENDERS.map((v) => (
+            <PillButton key={v.id} active={voiceGender === v.id} onClick={() => setVoiceGender(v.id)}>
+              {v.label}
+            </PillButton>
+          ))}
+        </div>
+      </Section>
 
-        <Section title="05 · Resume (optional but recommended)" subtitle="Personalizes questions to your background.">
-          {resumes.length > 0 && (
-            <div className="mb-3 space-y-1.5">
-              {resumes.map((r) => (
-                <button key={r.id} onClick={() => setSelectedResumeId(r.id === selectedResumeId ? null : r.id)}
-                  className={`w-full flex items-center justify-between p-3 rounded-lg border text-left transition ${selectedResumeId === r.id ? "border-brand bg-brand/10" : "border-border hover:border-brand/30"}`}>
-                  <div className="flex items-center gap-2.5">
-                    <FileText className="size-4 text-muted-foreground" />
-                    <div>
-                      <div className="text-sm">{r.file_name}</div>
-                      <div className="text-xs text-muted-foreground line-clamp-1">{r.summary ?? "Not analyzed"}</div>
+      <Section title="05 · Difficulty">
+        <div className="grid grid-cols-3 gap-2 max-w-md">
+          {DIFF.map((d) => (
+            <PillButton key={d} active={difficulty === d} onClick={() => setDifficulty(d)}>
+              <span className="capitalize">{d}</span>
+            </PillButton>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="06 · Duration" subtitle="Hard cap — the interview ends automatically when time is up.">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 max-w-2xl">
+          {DURATIONS.map((d) => (
+            <PillButton
+              key={d.sec}
+              active={timeLimitSeconds === d.sec}
+              onClick={() => setTimeLimitSeconds(d.sec)}
+            >
+              {d.label}
+            </PillButton>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title="07 · Run mode"
+        subtitle="Real mode enforces fullscreen and strict focus. Desktop only."
+      >
+        <div className="grid sm:grid-cols-2 gap-3 max-w-2xl">
+          <button
+            type="button"
+            onClick={() => setRunMode("practice")}
+            className={`p-4 rounded-xl border text-left transition ${
+              runMode === "practice"
+                ? "border-brand bg-brand/10"
+                : "border-border hover:border-brand/30"
+            }`}
+          >
+            <div className="text-sm font-semibold mb-1">Practice</div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Free-form. No fullscreen lock or tab-switch checks.
+            </p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setRunMode("real")}
+            className={`p-4 rounded-xl border text-left transition ${
+              runMode === "real"
+                ? "border-brand bg-brand/10"
+                : "border-border hover:border-brand/30"
+            }`}
+          >
+            <div className="text-sm font-semibold mb-1">Real</div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Fullscreen required. Tab switch or leaving fullscreen counts as a strike — two
+              strikes and the interview forfeits.
+            </p>
+          </button>
+        </div>
+      </Section>
+
+      <Section
+        title="08 · Resume"
+        subtitle="Personalizes questions to your background. PDF only."
+      >
+        {resumes.length > 0 && (
+          <div className="mb-4 space-y-1.5">
+            {resumes.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => setSelectedResumeId(r.id === selectedResumeId ? null : r.id)}
+                className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl border text-left transition ${
+                  selectedResumeId === r.id
+                    ? "border-brand bg-brand/10"
+                    : "border-border hover:border-brand/30"
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <FileText className="size-4 text-muted-foreground shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-sm truncate">{r.file_name}</div>
+                    <div className="text-xs text-muted-foreground line-clamp-1">
+                      {r.summary ?? "Not analyzed"}
                     </div>
                   </div>
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="p-4 rounded-lg border border-dashed border-border space-y-3">
-            <Label className="text-xs text-muted-foreground">Paste resume text, or upload a .txt file</Label>
-            <textarea
-              value={resumeText} onChange={(e) => setResumeText(e.target.value)}
-              rows={6} className="w-full bg-input border border-border rounded-md p-3 text-sm font-mono"
-              placeholder="Paste your resume here…"
-            />
-            <div className="flex items-center gap-2">
-              <label className="text-xs flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground">
-                <Upload className="size-3.5" /> Upload .txt
-                <input type="file" accept=".txt,text/plain" className="hidden" onChange={handleFile} />
-              </label>
-              <div className="flex-1" />
-              <Button size="sm" variant="outline" onClick={handleAnalyzeText} disabled={analyzing}>
-                {analyzing ? <Loader2 className="size-4 animate-spin" /> : "Analyze with AI"}
-              </Button>
-            </div>
+                </div>
+                {selectedResumeId === r.id ? (
+                  <CheckCircle2 className="size-4 text-brand shrink-0" />
+                ) : null}
+              </button>
+            ))}
           </div>
-        </Section>
+        )}
 
-        <div className="pt-4 flex justify-end">
-          <Button onClick={handleStart} disabled={starting} size="lg" className="bg-brand text-brand-foreground hover:opacity-90 glow-brand rounded-xl">
-            {starting ? <><Loader2 className="size-4 animate-spin mr-2" /> Preparing questions…</> : "Begin interview →"}
-          </Button>
-        </div>
+        <PdfDropzone onSuccess={onUpload} />
+
+        {showCompletion && lastUpload && missing ? (
+          <ResumeCompletionForm
+            className="mt-4"
+            missing={missing}
+            initial={{
+              target_role: lastUpload.profile.target_role ?? role ?? null,
+              experience_level: (lastUpload.profile.experience_level ?? null) as
+                | "entry" | "mid" | "senior" | "staff" | "principal" | null,
+              skills: lastUpload.profile.skills ?? [],
+            }}
+            onComplete={() => {
+              setMissing(null);
+              qc.invalidateQueries({ queryKey: ["profile"] });
+            }}
+            onSkip={() => setMissing(null)}
+          />
+        ) : null}
+      </Section>
+
+      <div className="pt-2 flex justify-end">
+        <Button
+          onClick={handleStart}
+          disabled={starting}
+          size="lg"
+          className="bg-brand text-brand-foreground hover:opacity-90 glow-brand rounded-xl"
+        >
+          {starting ? (
+            <>
+              <Loader2 className="size-4 animate-spin mr-2" /> Preparing questions…
+            </>
+          ) : (
+            "Begin interview →"
+          )}
+        </Button>
       </div>
     </div>
   );
 }
 
-function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div>
-      <h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground mb-1">{title}</h2>
+    <section>
+      <h2 className="text-[11px] font-mono uppercase tracking-[0.18em] text-muted-foreground mb-1">
+        {title}
+      </h2>
       {subtitle && <p className="text-xs text-muted-foreground mb-3">{subtitle}</p>}
       <div className="mt-3">{children}</div>
-    </div>
+    </section>
+  );
+}
+
+function PillButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`p-3 rounded-xl border text-sm font-medium transition ${
+        active
+          ? "border-brand bg-brand/10 text-brand"
+          : "border-border hover:border-brand/30"
+      }`}
+    >
+      {children}
+    </button>
   );
 }

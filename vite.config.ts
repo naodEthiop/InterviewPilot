@@ -12,4 +12,13 @@ export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
+  vite: {
+    ssr: {
+      external: ["@cursor/sdk"],
+      noExternal: [],
+    },
+    optimizeDeps: {
+      exclude: ["@cursor/sdk"],
+    },
+  },
 });

@@ -28,21 +28,31 @@ function Landing() {
       <SiteNav />
 
       {/* HERO */}
-      <section className="relative max-w-7xl mx-auto px-6 md:px-8 pt-16 pb-28 text-center">
-        <div className="absolute inset-x-0 top-0 h-[480px] grid-bg -z-10" />
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand/10 border border-brand/20 text-brand text-xs font-bold tracking-wider uppercase mb-8">
+      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 md:px-8 pt-12 md:pt-16 pb-24 md:pb-28 text-center">
+        <div className="absolute inset-x-0 top-0 h-[520px] grid-bg -z-10" />
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand/10 border border-brand/20 text-brand text-xs font-bold tracking-wider uppercase mb-8 fade-in">
           <Sparkles className="size-3" />
           Multi-agent AI panel · ElevenLabs voice
         </div>
-        <h1 className="font-display text-5xl md:text-7xl font-bold leading-[1.05] mb-7 max-w-4xl mx-auto text-balance">
-          The most realistic way to <span className="text-brand">practice interviews.</span>
+        <h1 className="font-display text-5xl md:text-7xl font-bold leading-[1.05] mb-7 max-w-4xl mx-auto text-balance slide-up">
+          The most realistic way to{" "}
+          <span className="text-gradient-brand">practice interviews.</span>
         </h1>
-        <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-10">
+        <p
+          className="text-lg text-muted-foreground max-w-2xl mx-auto mb-10 slide-up"
+          style={{ animationDelay: "80ms" }}
+        >
           Upload your resume, pick a mode, and run a real-voice interview. Our multi-agent AI panel adapts every follow-up, then delivers a brutally honest scorecard and a roadmap to hire.
         </p>
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+        <div
+          className="flex flex-col sm:flex-row items-center justify-center gap-3 slide-up"
+          style={{ animationDelay: "140ms" }}
+        >
           <Link to="/auth">
-            <Button size="lg" className="px-7 py-6 text-base rounded-xl bg-brand text-brand-foreground hover:opacity-90 glow-brand">
+            <Button
+              size="lg"
+              className="px-7 py-6 text-base rounded-xl bg-brand text-brand-foreground hover:opacity-90 glow-brand"
+            >
               Upload resume to start <ArrowRight className="ml-1 size-4" />
             </Button>
           </Link>
